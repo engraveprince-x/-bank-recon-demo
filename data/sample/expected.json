@@ -1,0 +1,13 @@
+{
+  "exact": 64,
+  "fuzzy": 46,
+  "many_to_one": 3,
+  "one_to_many": 2,
+  "amount_difference": 4,
+  "bank_duplicates": 3,
+  "ledger_duplicates": 1,
+  "unmatched_bank": 10,
+  "unmatched_ledger": 5,
+  "bank_rows": 137,
+  "ledger_rows": 128
+}

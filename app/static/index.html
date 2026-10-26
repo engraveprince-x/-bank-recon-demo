@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bank Reconciliation Assistant</title>
+<style>
+  :root { --ink:#1b2430; --muted:#6b7685; --line:#e3e7ec; --bg:#f5f7fa; --brand:#1f4e79; --ok:#1e8e5a; --warn:#c77c02; --bad:#c0392b; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.45 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color:var(--ink); background:var(--bg); }
+  header { background:var(--brand); color:#fff; padding:14px 28px; display:flex; align-items:center; gap:16px; }
+  header h1 { font-size:18px; margin:0; font-weight:600; }
+  header .sub { opacity:.8; font-size:13px; }
+  header .llm { margin-left:auto; font-size:12px; background:rgba(255,255,255,.15); padding:4px 10px; border-radius:12px; }
+  main { padding:20px 28px 40px; max-width:1400px; margin:0 auto; }
+  .toolbar { display:flex; flex-wrap:wrap; gap:10px; align-items:center; background:#fff; border:1px solid var(--line); border-radius:8px; padding:12px 14px; }
+  .toolbar label { color:var(--muted); font-size:12px; }
+  input[type=text] { padding:6px 8px; border:1px solid var(--line); border-radius:6px; width:140px; }
+  button, .btn { background:var(--brand); color:#fff; border:0; border-radius:6px; padding:7px 12px; cursor:pointer; font-size:13px; text-decoration:none; display:inline-block; }
+  button.ghost, .btn.ghost { background:#fff; color:var(--brand); border:1px solid var(--brand); }
+  button.ok { background:var(--ok); } button.bad { background:var(--bad); }
+  button.small { padding:3px 8px; font-size:12px; }
+  .spacer { flex:1; }
+  .cards { display:grid; grid-template-columns:repeat(6, 1fr); gap:12px; margin:16px 0; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:8px; padding:12px 14px; }
+  .card .n { font-size:24px; font-weight:600; } .card .l { color:var(--muted); font-size:12px; }
+  .card.ok .n { color:var(--ok); } .card.warn .n { color:var(--warn); } .card.bad .n { color:var(--bad); }
+  .tabs { display:flex; gap:4px; border-bottom:1px solid var(--line); }
+  .tab { padding:8px 14px; cursor:pointer; color:var(--muted); border-bottom:2px solid transparent; }
+  .tab.active { color:var(--brand); border-color:var(--brand); font-weight:600; }
+  .panel { background:#fff; border:1px solid var(--line); border-top:0; border-radius:0 0 8px 8px; padding:14px; overflow:auto; }
+  table { border-collapse:collapse; width:100%; font-size:13px; }
+  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { background:#f0f3f7; font-weight:600; position:sticky; top:0; }
+  td.num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .pill { display:inline-block; font-size:11px; padding:1px 7px; border-radius:10px; background:#eef2f7; color:var(--brand); white-space:nowrap; }
+  .pill.exact { background:#e3f4ea; color:var(--ok); } .pill.fuzzy { background:#fff4dd; color:var(--warn); }
+  .pill.many_to_one, .pill.one_to_many { background:#e8eefc; color:#3557b7; } .pill.amount_difference, .pill.duplicate, .pill.bank_duplicate, .pill.ledger_duplicate { background:#fbe6e3; color:var(--bad); }
+  .pill.rule { background:#eceff3; color:#4a5563; } .pill.llm { background:#efe6fb; color:#6b3fb5; }
+  .pill.confirm { background:#e3f4ea; color:var(--ok); } .pill.reject { background:#fbe6e3; color:var(--bad); } .pill.pending { background:#fff4dd; color:var(--warn); }
+  .muted { color:var(--muted); } .neg { color:var(--bad); }
+  .summary td.total { font-weight:700; border-top:2px solid var(--ink); }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+  .empty { padding:40px; text-align:center; color:var(--muted); }
+  h3 { margin:6px 0 10px; font-size:15px; }
+  .balanced { font-weight:600; } .balanced.yes { color:var(--ok); } .balanced.no { color:var(--bad); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Bank Reconciliation Assistant</h1>
+  <span class="sub" id="label">No data loaded</span>
+  <span class="llm" id="llm"></span>
+</header>
+<main>
+  <div class="toolbar">
+    <label>Reviewer</label><input type="text" id="user" value="reviewer">
+    <button onclick="loadSample()">Load sample data</button>
+    <form id="up" style="display:flex;gap:8px;align-items:center" onsubmit="upload(event)">
+      <label>Bank CSV</label><input type="file" name="bank" accept=".csv" required>
+      <label>Ledger CSV</label><input type="file" name="ledger" accept=".csv" required>
+      <button class="ghost" type="submit">Reconcile</button>
+    </form>
+    <span class="spacer"></span>
+    <a class="btn ghost" href="/api/export/results.csv">Results CSV</a>
+    <a class="btn ghost" href="/api/export/summary.csv">Summary CSV</a>
+    <a class="btn" href="/api/export/report.xlsx">Excel report</a>
+  </div>
+  <div id="cards" class="cards"></div>
+  <div class="tabs" id="tabs"></div>
+  <div class="panel" id="panel"><div class="empty">Load the sample data or upload a bank statement and a ledger CSV.</div></div>
+</main>
+<script>
+const TABS = [["summary","Summary"],["matches","Matches"],["review","Review queue"],["unmatched","Unmatched"],["duplicates","Duplicates"],["audit","Audit log"]];
+const params = new URLSearchParams(location.search);
+let S = null, tab = params.get("tab") || "summary";
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const money = v => { const n = Number(v); return `<span class="${n<0?'neg':''}">${n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}</span>`; };
+const pill = (t, cls) => `<span class="pill ${esc(cls||t)}">${esc(t)}</span>`;
+const user = () => document.getElementById("user").value.trim();
+
+async function api(url, opts) {
+  const r = await fetch(url, opts);
+  const j = await r.json();
+  if (!r.ok) { alert(j.detail || r.statusText); throw new Error(j.detail); }
+  return j;
+}
+async function refresh() { S = await api("/api/state"); render(); }
+async function loadSample() { const f = new FormData(); f.append("user", user()); S = await api("/api/sample", {method:"POST", body:f}); render(); }
+async function upload(e) { e.preventDefault(); const f = new FormData(e.target); f.append("user", user()); S = await api("/api/upload", {method:"POST", body:f}); render(); }
+async function decide(id, decision) {
+  S = await api(`/api/review/${encodeURIComponent(id)}`, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({decision, user:user()})});
+  render();
+}
+
+function render() {
+  document.getElementById("llm").textContent = S.llm_enabled ? "Account suggestions: LLM (rules as fallback)" : "Account suggestions: keyword rules (no LLM key)";
+  document.getElementById("tabs").innerHTML = TABS.map(([k,l]) => `<div class="tab ${k===tab?'active':''}" onclick="tab='${k}';render()">${l}${k==='review'&&S.review?` (${S.review.filter(i=>i.status==='pending').length})`:''}</div>`).join("");
+  if (!S.loaded) { if (tab === "audit") document.getElementById("panel").innerHTML = audit(); return; }
+  document.getElementById("label").textContent = S.label;
+  const c = S.counts, sc = S.summary.counts, pending = S.review.filter(i => i.status === "pending").length;
+  const ad = S.matches.filter(m => m.type === "amount_difference").length;
+  document.getElementById("cards").innerHTML = [
+    [`${c.bank_rows} / ${c.ledger_rows}`, "Bank / ledger rows", ""],
+    [sc.matches, "Matched groups", "ok"],
+    [ad, "Amount differences", ad ? "bad" : "ok"],
+    [sc.duplicates, "Suspected duplicates", sc.duplicates ? "bad" : "ok"],
+    [`${sc.unmatched_bank} / ${sc.unmatched_ledger}`, "Unmatched bank / ledger", "warn"],
+    [pending, "Pending review", pending ? "warn" : "ok"],
+  ].map(([n,l,k]) => `<div class="card ${k}"><div class="n">${n}</div><div class="l">${l}</div></div>`).join("");
+  document.getElementById("panel").innerHTML = ({summary, matches, review, unmatched, duplicates, audit})[tab]();
+}
+
+function summary() {
+  const rows = S.summary.lines.map(l => `<tr><td class="muted">${esc(l.section)}</td><td class="${/Adjusted|Unexplained/.test(l.label)?'total':''}">${esc(l.label)}</td><td class="num ${/Adjusted|Unexplained/.test(l.label)?'total':''}">${money(l.amount)}</td></tr>`).join("");
+  const byType = Object.entries(S.counts.matches_by_type).map(([t,n]) => `<tr><td>${pill(t)}</td><td class="num">${n}</td></tr>`).join("");
+  return `<div class="grid2"><div><h3>Reconciliation summary (bank to book)</h3><table class="summary"><tr><th>Side</th><th>Line</th><th class="num">Amount</th></tr>${rows}</table>
+    <p class="balanced ${S.summary.balanced?'yes':'no'}">${S.summary.balanced?'Balanced: every difference is explained by a listed item.':'Not balanced: investigate the unexplained difference.'}</p></div>
+    <div><h3>Matches by method</h3><table><tr><th>Method</th><th class="num">Groups</th></tr>${byType}</table>
+    <p class="muted">Exact = amount + reference within the date window. Fuzzy = same amount + similar description. Split = several lines that sum exactly to one entry. Rejected matches return to the unmatched lists and the summary updates.</p></div></div>`;
+}
+const side = arr => arr.map(t => `<div><span class="muted">${esc(t.id)}</span> ${esc(t.date)} ${esc(t.description)} <b>${money(t.amount)}</b></div>`).join("");
+function matches() {
+  return `<table><tr><th>ID</th><th>Method</th><th>Bank</th><th>Ledger</th><th class="num">Diff</th><th class="num">Conf.</th><th>Why</th><th>Status</th></tr>` +
+    S.matches.map(m => `<tr><td>${m.id}</td><td>${pill(m.type)}</td><td>${side(m.bank)}</td><td>${side(m.ledger)}</td><td class="num">${Number(m.difference)?money(m.difference):""}</td><td class="num">${m.confidence.toFixed(2)}</td><td class="muted">${esc(m.reason)}</td><td>${m.status==='auto'?'<span class="muted">auto</span>':pill(m.status)}</td></tr>`).join("") + "</table>";
+}
+function review() {
+  if (!S.review.length) return `<div class="empty">Nothing to review.</div>`;
+  return `<p class="muted">Low-confidence matches, amount differences, suspected duplicates and weak account suggestions. Every decision is written to the audit log with reviewer and time.</p>
+    <table><tr><th>Item</th><th>Kind</th><th>What</th><th class="num">Amount</th><th class="num">Diff</th><th class="num">Conf.</th><th>Detail</th><th>Status</th><th>Action</th></tr>` +
+    S.review.map(i => `<tr><td>${esc(i.item_id)}</td><td>${pill(i.kind==='match'?i.subtype:i.kind, i.kind==='match'?i.subtype:i.kind)}</td><td>${esc(i.summary)}</td><td class="num">${money(i.amount)}</td><td class="num">${i.difference&&Number(i.difference)?money(i.difference):""}</td><td class="num">${Number(i.confidence).toFixed(2)}</td><td class="muted">${esc(i.detail)}</td>
+      <td>${pill(i.status)}${i.decided_by?`<div class="muted">by ${esc(i.decided_by)}</div>`:""}</td>
+      <td style="white-space:nowrap"><button class="small ok" onclick="decide('${esc(i.item_id)}','confirm')">Confirm</button> <button class="small bad" onclick="decide('${esc(i.item_id)}','reject')">Reject</button></td></tr>`).join("") + "</table>";
+}
+function unmatched() {
+  const b = S.unmatched_bank.map(t => { const c = t.classification || {}; return `<tr><td>${esc(t.id)}</td><td>${esc(t.date)}</td><td>${esc(t.description)}</td><td class="num">${money(t.amount)}</td><td>${esc(c.account)}</td><td>${pill(c.source||"")}</td><td class="num">${c.confidence!=null?Number(c.confidence).toFixed(2):""}</td><td class="muted">${esc(c.rationale)}${c.note?` (${esc(c.note)})`:""}</td></tr>`; }).join("");
+  const l = S.unmatched_ledger.map(t => `<tr><td>${esc(t.id)}</td><td>${esc(t.date)}</td><td>${esc(t.description)}</td><td class="num">${money(t.amount)}</td><td>${esc(t.reference)}</td></tr>`).join("");
+  return `<h3>Bank lines not in the books (with suggested account)</h3><table><tr><th>ID</th><th>Date</th><th>Description</th><th class="num">Amount</th><th>Suggested account</th><th>Source</th><th class="num">Conf.</th><th>Rationale</th></tr>${b}</table>
+    <h3 style="margin-top:18px">Ledger entries not yet in the bank</h3><table><tr><th>ID</th><th>Date</th><th>Description</th><th class="num">Amount</th><th>Reference</th></tr>${l}</table>`;
+}
+function duplicates() {
+  if (!S.duplicates.length) return `<div class="empty">No duplicates found.</div>`;
+  return `<table><tr><th>ID</th><th>Source</th><th>Line</th><th>Copy of</th><th>Date</th><th>Description</th><th class="num">Amount</th><th>Reason</th></tr>` +
+    S.duplicates.map(d => `<tr><td>${d.id}</td><td>${pill(d.source)}</td><td>${esc(d.txn_id)}</td><td>${esc(d.original_id)}</td><td>${esc(d.txn.date)}</td><td>${esc(d.txn.description)}</td><td class="num">${money(d.amount)}</td><td class="muted">${esc(d.reason)}</td></tr>`).join("") + "</table>";
+}
+function audit() {
+  if (!S.audit.length) return `<div class="empty">No audit entries yet.</div>`;
+  return `<table><tr><th>When (UTC)</th><th>Who</th><th>Action</th><th>Target</th><th>Details</th></tr>` +
+    S.audit.map(a => `<tr><td>${esc(a.at)}</td><td>${esc(a.user)}</td><td>${esc(a.action)}</td><td>${esc(a.target)}</td><td class="muted">${esc(JSON.stringify(a.details))}</td></tr>`).join("") + "</table>";
+}
+
+(async () => { await refresh(); if (!S.loaded && params.get("sample")) await loadSample(); })();
+</script>
+</body>
+</html>
